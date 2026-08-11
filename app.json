@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "PestGuard Companion",
+    "slug": "pestguard-companion",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "pestguard",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0F14"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.pestguard.companion",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "PestGuard uses your location to place deterrent nodes on the farm map.",
+        "NSBluetoothAlwaysUsageDescription": "PestGuard uses Bluetooth to provision new ESP32 gateways over BLE.",
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "package": "ai.pestguard.companion",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0F14"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "POST_NOTIFICATIONS",
+        "INTERNET"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "color": "#35C77E"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "mqttBroker": "mqtts://broker.hivemq.com:8883",
+      "mqttTopicRoot": "pestguard/v1",
+      "firebaseProject": "pestguard-project43",
+      "firebase": {
+        "databaseURL": "https://pest-deterrent-system-7-default-rtdb.firebaseio.com"
+      }
+    }
+  }
+}
