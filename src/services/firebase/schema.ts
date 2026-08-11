@@ -165,11 +165,11 @@ export const SENSORS: SensorMeta[] = [
     key: 'distance',
     label: 'Distance',
     unit: 'cm',
+    // Triggers when the reading rises ABOVE the threshold, matching this
+    // deployment's convention. (The opposite — closer means detected — is the
+    // more common rangefinder setup, so this is deliberate, not an oversight.)
     icon: 'resize',
-    // An ultrasonic rangefinder detects by proximity: closer means something
-    // is there. The threshold is a display default, not a device setting —
-    // the ESP32 owns the real trigger logic.
-    detectBelow: 30,
+    detectAbove: 30,
     range: [0, 200],
   },
   {

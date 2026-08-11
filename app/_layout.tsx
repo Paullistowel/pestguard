@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ActivityIndicator, View } from 'react-native';
 import { ThemeProvider, useTheme } from '@/theme';
 import { StoreProvider, useStore } from '@/state/store';
+import { DeviceProvider } from '@/state/DeviceProvider';
 import { ToastHost } from '@/components/ToastHost';
 
 /**
@@ -70,7 +71,9 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ThemeProvider>
           <StoreProvider>
-            <RootNavigator />
+            <DeviceProvider>
+              <RootNavigator />
+            </DeviceProvider>
           </StoreProvider>
         </ThemeProvider>
       </SafeAreaProvider>

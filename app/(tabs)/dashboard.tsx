@@ -21,13 +21,13 @@ import {
 import { Toggle } from '@/components/Field';
 import { FadeIn, Gauge, IconChip, LivePulse } from '@/components/visual';
 import { ErrorState, SkeletonCard, SkeletonTile } from '@/components/feedback';
-import { CommandState, useDevice } from '@/state/useDevice';
+import { CommandState } from '@/state/useDevice';
+import { useDeviceState } from '@/state/DeviceProvider';
 import {
   ACTUATORS,
   SENSORS,
   SensorMeta,
   THRESHOLD_DEFAULTS,
-  fieldExists,
   deviceHonoursSettings,
 } from '@/services/firebase/schema';
 import { relativeTime } from '@/utils/format';
@@ -43,7 +43,7 @@ import { relativeTime } from '@/utils/format';
 export default function Dashboard() {
   const { c, isDark } = useTheme();
   const router = useRouter();
-  const d = useDevice();
+  const d = useDeviceState();
 
   const tone: Record<string, string> = {
     danger: c.danger,
@@ -75,33 +75,32 @@ export default function Dashboard() {
   const controlsDisabled = !d.firebaseConnected || d.health === 'offline';
 
   /*
-   * WHO DECIDES A DETECTION
+   * DETECTION IS DECIDED FROM THE THRESHOLDS
    *
-   * The ESP32 does, and the app must not second-guess it. The device compares
-   * against its own thresholds with its own timing and hysteresis, and it is
-   * the only thing that can see the sensor. So the headline state comes from
-   * what the device reports: its `status` field, and whether it has actually
-   * driven an output.
+   * The headline state is computed here, from the live readings against the
+   * thresholds you set — not from the device's `status` field or its outputs.
+   * That is a deliberate choice for this deployment: the sketch does not
+   * update `status` as conditions change, so trusting it would leave the
+   * dashboard reading "Armed" while a sensor sat well past its trigger point.
    *
-   * The threshold comparison below is shown alongside each reading purely so a
-   * user can see how close a value is to its trigger point. It is labelled as
-   * the app's own arithmetic and never overrides the device. Earlier this was
-   * the other way round, and the app would announce a detection while the
-   * device sat there reporting "idle" — the app was simply wrong.
+   * The device still owns what the *hardware* does. This governs what the
+   * dashboard reports, and the two can disagree — which is surfaced below
+   * rather than hidden, because that disagreement is usually the sign that the
+   * sketch is still using its own compiled-in thresholds.
    */
+  // Distance triggers when the reading is ABOVE the threshold.
+  const nearThreshold = typeof distance === 'number' && distance > distanceThreshold;
+  const loudThreshold = typeof sound === 'number' && sound > soundThreshold;
+  const anyDetection = nearThreshold || loudThreshold;
+
+  // What the device itself reports, kept only so a mismatch can be surfaced.
   const deviceStatus = (d.node?.status ?? '').toLowerCase();
   const deviceSaysDetecting =
     deviceStatus.includes('detect') ||
     deviceStatus.includes('alert') ||
-    deviceStatus.includes('deter');
-
-  // An output being on is the device acting, which is a detection in practice.
-  const anyDetection = deviceSaysDetecting || activeOutputs.length > 0;
-
-  // App-side comparisons — informational only.
-  const nearThreshold = typeof distance === 'number' && distance < distanceThreshold;
-  const loudThreshold = typeof sound === 'number' && sound > soundThreshold;
-  const appDisagrees = (nearThreshold || loudThreshold) !== anyDetection;
+    deviceStatus.includes('deter') ||
+    activeOutputs.length > 0;
+  const appDisagrees = anyDetection !== deviceSaysDetecting;
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
@@ -176,8 +175,8 @@ export default function Dashboard() {
 
             <Divider />
 
-            <Row justify="space-between">
-              <View>
+            <Row justify="space-between" align="flex-start">
+              <View style={{ flexShrink: 0, paddingRight: spacing.md }}>
                 <Muted variant="caption">LAST UPDATE</Muted>
                 <Txt variant="smallStrong" style={{ marginTop: 3 }}>
                   {d.node?.lastUpdate
@@ -187,11 +186,18 @@ export default function Dashboard() {
                     : 'never'}
                 </Txt>
               </View>
-              <View style={{ alignItems: 'flex-end' }}>
+              {/* Flexes and truncates: four output names easily exceed the card. */}
+              <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
                 <Muted variant="caption">ACTIVE OUTPUTS</Muted>
-                <Txt variant="smallStrong" style={{ marginTop: 3 }}>
+                <Txt
+                  variant="smallStrong"
+                  numberOfLines={2}
+                  style={{ marginTop: 3, textAlign: 'right' }}
+                >
                   {activeOutputs.length
-                    ? activeOutputs.map((a) => a.label).join(', ')
+                    ? activeOutputs.length === ACTUATORS.length
+                      ? 'All outputs'
+                      : activeOutputs.map((a) => a.label).join(', ')
                     : 'none'}
                 </Txt>
               </View>
@@ -265,7 +271,7 @@ export default function Dashboard() {
                 value={distance}
                 threshold={distanceThreshold}
                 triggered={nearThreshold}
-                caption={nearThreshold ? 'Below trigger' : 'Above trigger'}
+                caption={nearThreshold ? 'Above trigger' : 'Below trigger'}
               />
               <SensorCard
                 meta={SENSORS[1]}
@@ -278,11 +284,12 @@ export default function Dashboard() {
 
             {appDisagrees ? (
               <View style={{ marginTop: spacing.md }}>
-                <InfoNote tone="info" title="Reading crossed your threshold, device has not reacted">
-                  The comparison above is done here in the app. The ESP32 decides for itself and
-                  currently reports “{d.node?.status ?? 'unknown'}”. That usually means its
-                  compiled-in threshold differs from the one stored in Firebase — it will only
-                  match once the sketch reads `distanceThreshold` and `soundThreshold`.
+                <InfoNote tone="info" title="App and device disagree">
+                  The state above is computed from your thresholds. The ESP32 reports
+                  “{d.node?.status ?? 'unknown'}” and has {activeOutputs.length} output
+                  {activeOutputs.length === 1 ? '' : 's'} active. They differ because the sketch
+                  still uses its own compiled-in thresholds — it will agree once it reads
+                  `distanceThreshold` and `soundThreshold` from Firebase.
                 </InfoNote>
               </View>
             ) : null}
@@ -425,7 +432,7 @@ function SensorCard({
           <Muted variant="caption">{has ? caption.toUpperCase() : 'NO DATA'}</Muted>
         )}
         <Muted variant="caption">
-          {meta.key === 'distance' ? `TRIGGER < ${threshold}` : `TRIGGER > ${threshold}`}
+          {`TRIGGER > ${threshold}`}
         </Muted>
       </View>
     </Card>

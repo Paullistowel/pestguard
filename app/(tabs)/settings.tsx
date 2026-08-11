@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
@@ -22,13 +22,12 @@ import {
 import { SliderField, Toggle } from '@/components/Field';
 import { IconChip } from '@/components/visual';
 import { useStore } from '@/state/store';
-import { useDevice } from '@/state/useDevice';
+import { useDeviceState } from '@/state/DeviceProvider';
 import {
   DB_ROOT,
   SUGGESTED_ESP32_ADDITIONS,
   THRESHOLD_DEFAULTS,
   THRESHOLD_RANGES,
-  fieldExists,
   deviceHonoursSettings,
 } from '@/services/firebase/schema';
 import { RECOMMENDED_RULES, firebaseConfig } from '@/services/firebase/config';
@@ -53,34 +52,78 @@ export default function Settings() {
   const { c, mode, setMode } = useTheme();
   const router = useRouter();
   const store = useStore();
-  const d = useDevice();
+  const d = useDeviceState();
 
-  // Local slider state so dragging is smooth; the write happens on release.
+  // Local slider state so dragging stays smooth; the write happens on save.
   const [distance, setDistance] = useState<number | null>(null);
   const [sound, setSound] = useState<number | null>(null);
   const [showRules, setShowRules] = useState(false);
   const [showSketch, setShowSketch] = useState(false);
 
-  // Adopt the device's values whenever it reports new ones, unless the user is
-  // mid-drag — otherwise a slider would jump under the finger.
+  /*
+   * Keep the sliders in step with Firebase.
+   *
+   * The earlier version adopted the remote value only while the local state was
+   * still null, so the very first drag detached the slider permanently — a
+   * change made on another phone, or by the device itself, would never show up
+   * here. Instead we track the last remote value we applied and re-adopt
+   * whenever it actually changes. Comparing against that snapshot rather than
+   * against the slider position is what stops a live update from yanking the
+   * control out from under a finger mid-drag.
+   */
+  const lastRemote = useRef<{ distance?: number; sound?: number }>({});
+
   useEffect(() => {
-    if (distance === null && typeof d.node?.distanceThreshold === 'number') {
-      setDistance(d.node.distanceThreshold);
+    const rd = d.node?.distanceThreshold;
+    if (typeof rd === 'number' && rd !== lastRemote.current.distance) {
+      lastRemote.current.distance = rd;
+      setDistance(rd);
     }
-    if (sound === null && typeof d.node?.soundThreshold === 'number') {
-      setSound(d.node.soundThreshold);
+  }, [d.node?.distanceThreshold]);
+
+  useEffect(() => {
+    const rs = d.node?.soundThreshold;
+    if (typeof rs === 'number' && rs !== lastRemote.current.sound) {
+      lastRemote.current.sound = rs;
+      setSound(rs);
     }
-  }, [d.node?.distanceThreshold, d.node?.soundThreshold, distance, sound]);
+  }, [d.node?.soundThreshold]);
+
+  // Nothing is writable, and no value is trustworthy, until the first snapshot
+  // lands. Otherwise the sliders sit on their fallback defaults while the
+  // buttons cheerfully report "Saved" — describing a state that is not real.
+  const ready = !d.loading && !!d.node;
 
   const distanceValue = distance ?? d.node?.distanceThreshold ?? THRESHOLD_DEFAULTS.distance;
   const soundValue = sound ?? d.node?.soundThreshold ?? THRESHOLD_DEFAULTS.sound;
 
-  const hasDistanceThreshold = fieldExists(d.node, 'distanceThreshold');
-  const hasSoundThreshold = fieldExists(d.node, 'soundThreshold');
-  const hasEnabled = fieldExists(d.node, 'enabled');
+  // Unsaved when the slider no longer matches what Firebase holds.
+  const distanceDirty =
+    ready &&
+    typeof d.node?.distanceThreshold === 'number' &&
+    Math.round(distanceValue) !== Math.round(d.node.distanceThreshold);
+  const soundDirty =
+    ready &&
+    typeof d.node?.soundThreshold === 'number' &&
+    Math.round(soundValue) !== Math.round(d.node.soundThreshold);
+
+  /*
+   * Presence is not acknowledgement.
+   *
+   * These three fields exist in the database only because this app wrote them.
+   * Checking `fieldExists` therefore always returned true and painted a green
+   * "Confirmed by device" badge next to a slider the firmware has never read —
+   * the precise false reassurance this design exists to prevent. The only
+   * positive evidence the device acts on anything is its own `state/` mirror.
+   */
+  const acknowledged = deviceHonoursSettings(d.node);
+  const hasDistanceThreshold = acknowledged;
+  const hasSoundThreshold = acknowledged;
+  const hasEnabled = acknowledged;
   const enabled = d.node?.enabled !== false;
 
-  const writable = d.firebaseConnected;
+
+  const writable = d.firebaseConnected && ready;
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
@@ -125,15 +168,16 @@ export default function Settings() {
               step={THRESHOLD_RANGES.distance.step}
               unit=" cm"
               disabled={!writable}
-              hint="An object closer than this counts as a detection. The ultrasonic sensor currently reads about
-                    the value shown on the dashboard, so set this below your normal background distance."
+              hint="A reading above this counts as a detection. Set it above your normal background
+                    distance so ordinary conditions do not trigger it."
             />
             <Row gap={spacing.md}>
               <Button
-                label="Save distance"
-                icon="save"
+                label={!ready ? 'Loading…' : distanceDirty ? 'Save distance' : 'Saved'}
+                icon={!ready ? 'time' : distanceDirty ? 'save' : 'checkmark'}
                 small
-                disabled={!writable || distance === null}
+                tone={distanceDirty ? 'primary' : 'ghost'}
+                disabled={!writable || !distanceDirty}
                 onPress={() => d.setThreshold('distance', distanceValue)}
               />
               {!hasDistanceThreshold ? (
@@ -158,10 +202,11 @@ export default function Settings() {
             />
             <Row gap={spacing.md}>
               <Button
-                label="Save sound"
-                icon="save"
+                label={!ready ? 'Loading…' : soundDirty ? 'Save sound' : 'Saved'}
+                icon={!ready ? 'time' : soundDirty ? 'save' : 'checkmark'}
                 small
-                disabled={!writable || sound === null}
+                tone={soundDirty ? 'primary' : 'ghost'}
+                disabled={!writable || !soundDirty}
                 onPress={() => d.setThreshold('sound', soundValue)}
               />
               {!hasSoundThreshold ? (
